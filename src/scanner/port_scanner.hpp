@@ -3,6 +3,8 @@
 #include <chrono>
 #include <string>
 
+#include "platform/windows_sockets.hpp"
+
 namespace devdisc {
 
 /// Result of a single TCP connection attempt.
@@ -16,13 +18,13 @@ enum class ConnectResult {
 
 std::string to_string(ConnectResult result);
 
-/// Attempts a TCP connection using a non-blocking socket and poll(), so the
+/// Attempts a TCP connection using a non-blocking socket and WSAPoll(), so the
 /// call never blocks longer than `timeout`.
 ///
-/// On success the connected socket descriptor is stored in `out_fd` and the
-/// caller owns it. On failure `out_fd` is set to -1.
+/// On success the connected socket is stored in `out_socket` and the caller
+/// owns it. On failure `out_socket` is set to kInvalidSocket.
 ConnectResult tcp_connect(const std::string& ip, uint16_t port,
-                          std::chrono::milliseconds timeout, int& out_fd);
+                          std::chrono::milliseconds timeout, socket_t& out_socket);
 
 /// Convenience wrapper that closes the socket immediately.
 ConnectResult tcp_probe(const std::string& ip, uint16_t port,

@@ -1,11 +1,6 @@
 #include "scanner/ssh_detector.hpp"
 
-#include <poll.h>
-#include <sys/socket.h>
-#include <unistd.h>
-
 #include <array>
-#include <cerrno>
 #include <chrono>
 
 #include "scanner/port_scanner.hpp"
@@ -63,7 +58,7 @@ std::string sanitize_banner(const std::string& raw) {
     return result;
 }
 
-SshProbeResult read_ssh_banner(int fd, const std::string& ip,
+SshProbeResult read_ssh_banner(socket_t handle, const std::string& ip,
                                std::chrono::milliseconds timeout) {
     SshProbeResult result;
     result.ip = ip;
@@ -78,20 +73,14 @@ SshProbeResult read_ssh_banner(int fd, const std::string& ip,
         const auto remaining =
             std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now).count();
 
-        pollfd pfd{};
-        pfd.fd = fd;
-        pfd.events = POLLIN;
-        int poll_rc = 0;
-        do {
-            poll_rc = ::poll(&pfd, 1, static_cast<int>(remaining));
-        } while (poll_rc < 0 && errno == EINTR);
-
+        const int poll_rc = wait_for_socket(handle, /*for_write=*/false,
+                                            std::chrono::milliseconds(remaining));
         if (poll_rc <= 0) {
             break;
         }
 
         std::array<char, 128> chunk{};
-        const ssize_t bytes = ::recv(fd, chunk.data(), chunk.size(), 0);
+        const int bytes = ::recv(handle, chunk.data(), static_cast<int>(chunk.size()), 0);
         if (bytes <= 0) {
             break;
         }
@@ -118,8 +107,8 @@ SshProbeResult probe_ssh(const std::string& ip, uint16_t port,
     SshProbeResult result;
     result.ip = ip;
 
-    int fd = -1;
-    const ConnectResult connect_result = tcp_connect(ip, port, connect_timeout, fd);
+    socket_t handle = kInvalidSocket;
+    const ConnectResult connect_result = tcp_connect(ip, port, connect_timeout, handle);
     switch (connect_result) {
         case ConnectResult::Connected:
             break;
@@ -137,8 +126,8 @@ SshProbeResult probe_ssh(const std::string& ip, uint16_t port,
             return result;
     }
 
-    result = read_ssh_banner(fd, ip, banner_timeout);
-    ::close(fd);
+    result = read_ssh_banner(handle, ip, banner_timeout);
+    close_socket(handle);
     return result;
 }
 

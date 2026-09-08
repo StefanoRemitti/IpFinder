@@ -1,9 +1,6 @@
 #include "scanner/ssh_detector.hpp"
 
-#include <arpa/inet.h>
-#include <netinet/in.h>
-#include <sys/socket.h>
-#include <unistd.h>
+#include "platform/windows_sockets.hpp"
 
 #include <chrono>
 #include <string>
@@ -25,36 +22,35 @@ class FakeServer {
 public:
     explicit FakeServer(std::string payload, bool send_payload = true)
         : payload_(std::move(payload)), send_payload_(send_payload) {
-        listen_fd_ = ::socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
-        int reuse = 1;
-        ::setsockopt(listen_fd_, SOL_SOCKET, SO_REUSEADDR, &reuse, sizeof(reuse));
+        devdisc::ensure_winsock_initialised();
+        listen_handle_ = ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
         sockaddr_in address{};
         address.sin_family = AF_INET;
         address.sin_port = 0;
         address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-        ::bind(listen_fd_, reinterpret_cast<sockaddr*>(&address), sizeof(address));
-        ::listen(listen_fd_, 4);
-        socklen_t length = sizeof(address);
-        ::getsockname(listen_fd_, reinterpret_cast<sockaddr*>(&address), &length);
+        ::bind(listen_handle_, reinterpret_cast<sockaddr*>(&address), sizeof(address));
+        ::listen(listen_handle_, 4);
+        int length = sizeof(address);
+        ::getsockname(listen_handle_, reinterpret_cast<sockaddr*>(&address), &length);
         port_ = ntohs(address.sin_port);
 
         worker_ = std::thread([this]() {
-            const int client = ::accept(listen_fd_, nullptr, nullptr);
-            if (client < 0) {
+            devdisc::socket_t client = ::accept(listen_handle_, nullptr, nullptr);
+            if (client == devdisc::kInvalidSocket) {
                 return;
             }
             if (send_payload_) {
-                (void)::send(client, payload_.data(), payload_.size(), 0);
+                (void)::send(client, payload_.data(), static_cast<int>(payload_.size()), 0);
             } else {
                 std::this_thread::sleep_for(300ms);
             }
-            ::close(client);
+            devdisc::close_socket(client);
         });
     }
 
     ~FakeServer() {
-        ::shutdown(listen_fd_, SHUT_RDWR);
-        ::close(listen_fd_);
+        ::shutdown(listen_handle_, SD_BOTH);
+        devdisc::close_socket(listen_handle_);
         if (worker_.joinable()) {
             worker_.join();
         }
@@ -65,21 +61,22 @@ public:
 private:
     std::string payload_;
     bool send_payload_;
-    int listen_fd_ = -1;
+    devdisc::socket_t listen_handle_ = devdisc::kInvalidSocket;
     uint16_t port_ = 0;
     std::thread worker_;
 };
 
 uint16_t closed_port() {
-    const int fd = ::socket(AF_INET, SOCK_STREAM, 0);
+    devdisc::ensure_winsock_initialised();
+    devdisc::socket_t handle = ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     sockaddr_in address{};
     address.sin_family = AF_INET;
     address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-    ::bind(fd, reinterpret_cast<sockaddr*>(&address), sizeof(address));
-    socklen_t length = sizeof(address);
-    ::getsockname(fd, reinterpret_cast<sockaddr*>(&address), &length);
+    ::bind(handle, reinterpret_cast<sockaddr*>(&address), sizeof(address));
+    int length = sizeof(address);
+    ::getsockname(handle, reinterpret_cast<sockaddr*>(&address), &length);
     const uint16_t port = ntohs(address.sin_port);
-    ::close(fd);
+    devdisc::close_socket(handle);
     return port;
 }
 

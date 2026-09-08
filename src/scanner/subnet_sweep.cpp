@@ -1,6 +1,6 @@
 #include "scanner/subnet_sweep.hpp"
 
-#include <arpa/inet.h>
+#include "platform/windows_sockets.hpp"
 
 #include <array>
 #include <future>
@@ -9,6 +9,7 @@ namespace devdisc {
 namespace {
 
 std::string to_dotted(uint32_t host_order) {
+    ensure_winsock_initialised();
     in_addr addr{};
     addr.s_addr = htonl(host_order);
     std::array<char, INET_ADDRSTRLEN> buffer{};

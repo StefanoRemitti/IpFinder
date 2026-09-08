@@ -8,7 +8,7 @@ namespace devdisc {
 
 /// A candidate IPv4 network interface of the local PC.
 struct NetworkInterface {
-    std::string name;       ///< Kernel interface name, e.g. "enp3s0".
+    std::string name;       ///< Adapter friendly name, e.g. "Ethernet 2".
     std::string ipv4;       ///< Dotted-quad IPv4 address of the interface.
     std::string netmask;    ///< Dotted-quad netmask.
     uint32_t address = 0;   ///< IPv4 address in host byte order.
@@ -17,6 +17,9 @@ struct NetworkInterface {
     bool is_up = false;
     bool is_running = false;
     bool is_point_to_point = false;
+    uint32_t if_index = 0;   ///< Windows IPv4 interface index (IF_INDEX).
+    std::string mac;         ///< Physical address, colon separated, may be empty.
+    std::string description; ///< Adapter description reported by Windows.
 
     /// Network address (host byte order).
     uint32_t network() const { return address & mask; }
@@ -41,14 +44,20 @@ struct InterfaceSnapshot {
     bool is_running = false;
     bool is_point_to_point = false;
     bool has_ipv4 = false;
+    uint32_t if_index = 0;
+    std::string mac;
+    std::string description;
 };
 
-/// Reads every IPv4-capable interface of this machine using getifaddrs(3).
+/// Reads every IPv4-capable adapter of this machine using
+/// GetAdaptersAddresses() (iphlpapi).
 std::vector<InterfaceSnapshot> enumerate_interfaces();
 
-/// Returns true when the interface name looks like a virtual interface that
-/// cannot be a direct Ethernet link to the target device (docker bridges,
-/// veth pairs, VPN tunnels, virtual bridges, ...).
+/// Returns true when the adapter name or description looks like a virtual
+/// adapter that cannot be a direct Ethernet link to the target device
+/// (Hyper-V vEthernet switches, VMware/VirtualBox host-only adapters, VPN
+/// tunnels, loopback adapters, ...). Matching is case insensitive and
+/// substring based because Windows adapter names are human readable.
 bool is_virtual_interface_name(const std::string& name);
 
 /// Applies the selection rules to a set of snapshots.
@@ -57,7 +66,7 @@ bool is_virtual_interface_name(const std::string& name);
 ///   * is not loopback,
 ///   * is administratively up and operationally running,
 ///   * has an IPv4 address and a netmask,
-///   * is not a well-known virtual interface.
+///   * is not a well-known virtual adapter.
 std::vector<NetworkInterface> filter_candidate_interfaces(
     const std::vector<InterfaceSnapshot>& snapshots);
 

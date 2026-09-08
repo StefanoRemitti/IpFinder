@@ -1,14 +1,5 @@
 #include "scanner/port_scanner.hpp"
 
-#include <arpa/inet.h>
-#include <fcntl.h>
-#include <netinet/in.h>
-#include <poll.h>
-#include <sys/socket.h>
-#include <sys/types.h>
-#include <unistd.h>
-
-#include <cerrno>
 #include <cstdint>
 
 namespace devdisc {
@@ -18,14 +9,14 @@ ConnectResult classify(int error_code) {
     switch (error_code) {
         case 0:
             return ConnectResult::Connected;
-        case ECONNREFUSED:
+        case WSAECONNREFUSED:
             return ConnectResult::Refused;
-        case ETIMEDOUT:
+        case WSAETIMEDOUT:
             return ConnectResult::TimedOut;
-        case EHOSTUNREACH:
-        case ENETUNREACH:
-        case EHOSTDOWN:
-        case ENETDOWN:
+        case WSAEHOSTUNREACH:
+        case WSAENETUNREACH:
+        case WSAEHOSTDOWN:
+        case WSAENETDOWN:
             return ConnectResult::Unreachable;
         default:
             return ConnectResult::Error;
@@ -51,8 +42,12 @@ std::string to_string(ConnectResult result) {
 }
 
 ConnectResult tcp_connect(const std::string& ip, uint16_t port,
-                          std::chrono::milliseconds timeout, int& out_fd) {
-    out_fd = -1;
+                          std::chrono::milliseconds timeout, socket_t& out_socket) {
+    out_socket = kInvalidSocket;
+
+    if (!ensure_winsock_initialised()) {
+        return ConnectResult::Error;
+    }
 
     sockaddr_in address{};
     address.sin_family = AF_INET;
@@ -61,61 +56,60 @@ ConnectResult tcp_connect(const std::string& ip, uint16_t port,
         return ConnectResult::Error;
     }
 
-    const int fd = ::socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK | SOCK_CLOEXEC, 0);
-    if (fd < 0) {
+    socket_t handle = ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
+    if (handle == kInvalidSocket) {
+        return ConnectResult::Error;
+    }
+    if (!set_non_blocking(handle)) {
+        close_socket(handle);
         return ConnectResult::Error;
     }
 
-    int rc = ::connect(fd, reinterpret_cast<sockaddr*>(&address), sizeof(address));
+    const int rc = ::connect(handle, reinterpret_cast<sockaddr*>(&address), sizeof(address));
     if (rc == 0) {
-        out_fd = fd;
+        out_socket = handle;
         return ConnectResult::Connected;
     }
-    if (errno != EINPROGRESS) {
-        const ConnectResult result = classify(errno);
-        ::close(fd);
+    const int connect_error = last_socket_error();
+    if (connect_error != WSAEWOULDBLOCK && connect_error != WSAEINPROGRESS) {
+        const ConnectResult result = classify(connect_error);
+        close_socket(handle);
         return result;
     }
 
-    pollfd pfd{};
-    pfd.fd = fd;
-    pfd.events = POLLOUT;
-    int poll_rc = 0;
-    do {
-        poll_rc = ::poll(&pfd, 1, static_cast<int>(timeout.count()));
-    } while (poll_rc < 0 && errno == EINTR);
-
+    // WSAPoll() reports a failed connection attempt through POLLERR/POLLHUP, so
+    // the outcome is always confirmed with SO_ERROR below.
+    const int poll_rc = wait_for_socket(handle, /*for_write=*/true, timeout);
     if (poll_rc == 0) {
-        ::close(fd);
+        close_socket(handle);
         return ConnectResult::TimedOut;
     }
     if (poll_rc < 0) {
-        ::close(fd);
+        close_socket(handle);
         return ConnectResult::Error;
     }
 
     int so_error = 0;
-    socklen_t length = sizeof(so_error);
-    if (::getsockopt(fd, SOL_SOCKET, SO_ERROR, &so_error, &length) != 0) {
-        ::close(fd);
+    int length = static_cast<int>(sizeof(so_error));
+    if (::getsockopt(handle, SOL_SOCKET, SO_ERROR, reinterpret_cast<char*>(&so_error), &length) !=
+        0) {
+        close_socket(handle);
         return ConnectResult::Error;
     }
     if (so_error != 0) {
-        ::close(fd);
+        close_socket(handle);
         return classify(so_error);
     }
 
-    out_fd = fd;
+    out_socket = handle;
     return ConnectResult::Connected;
 }
 
 ConnectResult tcp_probe(const std::string& ip, uint16_t port,
                         std::chrono::milliseconds timeout) {
-    int fd = -1;
-    const ConnectResult result = tcp_connect(ip, port, timeout, fd);
-    if (fd >= 0) {
-        ::close(fd);
-    }
+    socket_t handle = kInvalidSocket;
+    const ConnectResult result = tcp_connect(ip, port, timeout, handle);
+    close_socket(handle);
     return result;
 }
 

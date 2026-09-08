@@ -1,5 +1,3 @@
-#include <unistd.h>
-
 #include <algorithm>
 #include <cstdlib>
 #include <cstring>
@@ -10,6 +8,7 @@
 #include <vector>
 
 #include "config.hpp"
+#include "platform/windows_sockets.hpp"
 #include "network/arp_discovery.hpp"
 #include "network/interface_discovery.hpp"
 #include "output/formatter.hpp"
@@ -59,7 +58,8 @@ void print_usage() {
            "  --auth-timeout MS        SSH authentication timeout (default 5000)\n"
            "  --command-timeout MS     Remote command timeout (default 5000)\n"
            "  --layer2-window MS       Layer-2 listening window (default 4000)\n"
-           "  --interface NAME         Disambiguate between candidate interfaces\n"
+           "  --interface NAME         Disambiguate between candidate adapters\n"
+           "                           (Windows adapter name, e.g. \"Ethernet 2\")\n"
            "  --select IP              Pick a candidate when several SSH devices answer\n"
            "  --strict-host-key        Abort on unknown/mismatching SSH host keys\n"
            "  --mock-ifconfig FILE     Offline mode: parse FILE as ifconfig output\n"
@@ -213,7 +213,7 @@ int select_interface(const Options& options, NetworkInterface& selected) {
 
     if (candidates.empty()) {
         std::cerr << "Error: No suitable network interface found.\n"
-                  << "       Looked for an interface that is up, running, non-loopback,\n"
+                  << "       Looked for an adapter that is connected, non-loopback,\n"
                   << "       non-virtual and carrying an IPv4 address.\n";
         return kNoInterface;
     }
@@ -249,6 +249,10 @@ std::vector<SshProbeResult> stage_a_subnet_scan(const Options& options,
 std::vector<SshProbeResult> stage_b_layer2(const Options& options, const NetworkInterface& iface,
                                            ThreadPool& pool, std::string& diagnostic) {
     log(options, "stage A found nothing, starting layer-2 discovery on " + iface.name);
+    if (!is_process_elevated()) {
+        log(options,
+            "not running elevated: promiscuous capture will most likely be refused by Windows");
+    }
     const L2DiscoveryResult l2 = discover_link_layer_hosts(iface, options.layer2_window);
     if (l2.observations.empty()) {
         diagnostic = l2.error.empty() ? "layer-2 discovery observed no station" : l2.error;
@@ -275,8 +279,8 @@ std::vector<SshProbeResult> stage_b_layer2(const Options& options, const Network
         message << "\n       If the address is outside " << iface.ipv4 << "/"
                 << iface.prefix_length()
                 << " the PC has no route to it; add a temporary address on the device's\n"
-                   "       subnet, e.g. sudo ip addr add <free-ip>/<prefix> dev "
-                << iface.name;
+                   "       subnet, e.g. netsh interface ipv4 add address \"" << iface.name
+                << "\" <free-ip> <netmask>";
         diagnostic = message.str();
     }
     return found;
@@ -424,6 +428,11 @@ int run(const Options& options) {
 }  // namespace devdisc
 
 int main(int argc, char** argv) {
+    if (!devdisc::ensure_winsock_initialised()) {
+        std::cerr << "Error: Winsock could not be initialised.\n";
+        return devdisc::kUsageError;
+    }
+
     devdisc::Options options;
     int exit_code = devdisc::kSuccess;
     if (!devdisc::parse_options(argc, argv, options, exit_code)) {
