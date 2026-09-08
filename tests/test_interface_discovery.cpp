@@ -10,9 +10,11 @@ using devdisc::NetworkInterface;
 namespace {
 
 InterfaceSnapshot make(const std::string& name, const std::string& ip, const std::string& mask,
-                       bool up = true, bool running = true, bool loopback = false) {
+                       bool up = true, bool running = true, bool loopback = false,
+                       const std::string& description = "") {
     InterfaceSnapshot snapshot;
     snapshot.name = name;
+    snapshot.description = description;
     snapshot.ipv4 = ip;
     snapshot.netmask = mask;
     snapshot.has_ipv4 = !ip.empty();
@@ -24,67 +26,72 @@ InterfaceSnapshot make(const std::string& name, const std::string& ip, const std
 
 void test_single_ethernet_interface() {
     const std::vector<InterfaceSnapshot> snapshots = {
-        make("lo", "127.0.0.1", "255.0.0.0", true, true, true),
-        make("enp3s0", "192.168.10.20", "255.255.255.0"),
+        make("Loopback Pseudo-Interface 1", "127.0.0.1", "255.0.0.0", true, true, true),
+        make("Ethernet 2", "192.168.10.20", "255.255.255.0"),
     };
     const std::vector<NetworkInterface> candidates = filter_candidate_interfaces(snapshots);
     CHECK_EQ(candidates.size(), std::size_t{1});
-    CHECK_EQ(candidates.front().name, std::string("enp3s0"));
+    CHECK_EQ(candidates.front().name, std::string("Ethernet 2"));
     CHECK_EQ(candidates.front().prefix_length(), 24);
     CHECK_EQ(candidates.front().usable_host_count(), uint64_t{254});
 }
 
 void test_loopback_only() {
     const std::vector<InterfaceSnapshot> snapshots = {
-        make("lo", "127.0.0.1", "255.0.0.0", true, true, true)};
+        make("Loopback Pseudo-Interface 1", "127.0.0.1", "255.0.0.0", true, true, true)};
     CHECK_EQ(filter_candidate_interfaces(snapshots).size(), std::size_t{0});
 }
 
 void test_multiple_candidates_are_all_reported() {
     const std::vector<InterfaceSnapshot> snapshots = {
-        make("eth0", "192.168.1.5", "255.255.255.0"),
-        make("ens33", "10.0.0.5", "255.255.255.0"),
+        make("Ethernet", "192.168.1.5", "255.255.255.0"),
+        make("Ethernet 3", "10.0.0.5", "255.255.255.0"),
     };
     CHECK_EQ(filter_candidate_interfaces(snapshots).size(), std::size_t{2});
 }
 
 void test_interface_without_ipv4_is_ignored() {
-    std::vector<InterfaceSnapshot> snapshots = {make("eth1", "", "")};
+    std::vector<InterfaceSnapshot> snapshots = {make("Ethernet 4", "", "")};
     CHECK_EQ(filter_candidate_interfaces(snapshots).size(), std::size_t{0});
 }
 
 void test_down_interface_is_ignored() {
     const std::vector<InterfaceSnapshot> snapshots = {
-        make("eth0", "192.168.1.5", "255.255.255.0", false, false)};
+        make("Ethernet", "192.168.1.5", "255.255.255.0", false, false)};
     CHECK_EQ(filter_candidate_interfaces(snapshots).size(), std::size_t{0});
 
     const std::vector<InterfaceSnapshot> no_carrier = {
-        make("eth0", "192.168.1.5", "255.255.255.0", true, false)};
+        make("Ethernet", "192.168.1.5", "255.255.255.0", true, false)};
     CHECK_EQ(filter_candidate_interfaces(no_carrier).size(), std::size_t{0});
 }
 
 void test_virtual_interfaces_are_ignored() {
+    CHECK(is_virtual_interface_name("vEthernet (Default Switch)"));
+    CHECK(is_virtual_interface_name("VMware Network Adapter VMnet1"));
+    CHECK(is_virtual_interface_name("VirtualBox Host-Only Network"));
+    CHECK(is_virtual_interface_name("Loopback Pseudo-Interface 1"));
+    CHECK(is_virtual_interface_name("TAP-Windows Adapter V9"));
+    CHECK(is_virtual_interface_name("Bluetooth Network Connection"));
     CHECK(is_virtual_interface_name("docker0"));
-    CHECK(is_virtual_interface_name("veth1a2b"));
-    CHECK(is_virtual_interface_name("br-1234"));
-    CHECK(is_virtual_interface_name("virbr0"));
-    CHECK(is_virtual_interface_name("tun0"));
-    CHECK(!is_virtual_interface_name("eth0"));
-    CHECK(!is_virtual_interface_name("enp1s0"));
-    CHECK(!is_virtual_interface_name("ens33"));
+    CHECK(!is_virtual_interface_name("Ethernet"));
+    CHECK(!is_virtual_interface_name("Ethernet 2"));
+    CHECK(!is_virtual_interface_name("Wi-Fi"));
 
+    // The description is checked as well: Windows names an adapter "Ethernet 5"
+    // even when it is a Hyper-V virtual switch port.
     const std::vector<InterfaceSnapshot> snapshots = {
-        make("docker0", "172.17.0.1", "255.255.0.0"),
-        make("enp2s0", "192.168.10.20", "255.255.255.0"),
+        make("Ethernet 5", "172.17.0.1", "255.255.0.0", true, true, false,
+             "Hyper-V Virtual Ethernet Adapter"),
+        make("Ethernet 2", "192.168.10.20", "255.255.255.0"),
     };
     const std::vector<NetworkInterface> candidates = filter_candidate_interfaces(snapshots);
     CHECK_EQ(candidates.size(), std::size_t{1});
-    CHECK_EQ(candidates.front().name, std::string("enp2s0"));
+    CHECK_EQ(candidates.front().name, std::string("Ethernet 2"));
 }
 
 void test_network_arithmetic() {
     const std::vector<InterfaceSnapshot> snapshots = {
-        make("eth0", "192.168.10.20", "255.255.255.128")};
+        make("Ethernet", "192.168.10.20", "255.255.255.128")};
     const NetworkInterface iface = filter_candidate_interfaces(snapshots).front();
     CHECK_EQ(iface.prefix_length(), 25);
     CHECK_EQ(iface.network(), uint32_t{0xC0A80A00});

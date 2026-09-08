@@ -1,12 +1,10 @@
 #include "scanner/subnet_sweep.hpp"
 
-#include <algorithm>
-#include <arpa/inet.h>
-#include <netinet/in.h>
-#include <sys/socket.h>
-#include <unistd.h>
+#include "platform/windows_sockets.hpp"
 
+#include <algorithm>
 #include <chrono>
+#include <memory>
 #include <thread>
 
 #include "config.hpp"
@@ -21,7 +19,7 @@ namespace {
 
 NetworkInterface make_interface(const std::string& ip, const std::string& mask) {
     devdisc::InterfaceSnapshot snapshot;
-    snapshot.name = "eth0";
+    snapshot.name = "Ethernet";
     snapshot.ipv4 = ip;
     snapshot.netmask = mask;
     snapshot.has_ipv4 = true;
@@ -60,29 +58,30 @@ void test_oversized_subnet_is_refused() {
 void test_sweep_finds_only_ssh_speakers() {
     // Two loopback services: one speaks SSH, the other does not.
     struct Server {
-        int fd = -1;
+        devdisc::socket_t handle = devdisc::kInvalidSocket;
         uint16_t port = 0;
         std::thread worker;
     };
 
     auto start_server = [](const std::string& payload) {
+        devdisc::ensure_winsock_initialised();
         auto server = std::make_shared<Server>();
-        server->fd = ::socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
+        server->handle = ::socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
         sockaddr_in address{};
         address.sin_family = AF_INET;
         address.sin_addr.s_addr = htonl(INADDR_LOOPBACK);
-        ::bind(server->fd, reinterpret_cast<sockaddr*>(&address), sizeof(address));
-        ::listen(server->fd, 4);
-        socklen_t length = sizeof(address);
-        ::getsockname(server->fd, reinterpret_cast<sockaddr*>(&address), &length);
+        ::bind(server->handle, reinterpret_cast<sockaddr*>(&address), sizeof(address));
+        ::listen(server->handle, 4);
+        int length = sizeof(address);
+        ::getsockname(server->handle, reinterpret_cast<sockaddr*>(&address), &length);
         server->port = ntohs(address.sin_port);
         server->worker = std::thread([server, payload]() {
-            const int client = ::accept(server->fd, nullptr, nullptr);
-            if (client < 0) {
+            devdisc::socket_t client = ::accept(server->handle, nullptr, nullptr);
+            if (client == devdisc::kInvalidSocket) {
                 return;
             }
-            (void)::send(client, payload.data(), payload.size(), 0);
-            ::close(client);
+            (void)::send(client, payload.data(), static_cast<int>(payload.size()), 0);
+            devdisc::close_socket(client);
         });
         return server;
     };
@@ -102,8 +101,8 @@ void test_sweep_finds_only_ssh_speakers() {
     CHECK_EQ(http_hits.size(), std::size_t{0});
 
     for (auto* server : {ssh_server.get(), http_server.get()}) {
-        ::shutdown(server->fd, SHUT_RDWR);
-        ::close(server->fd);
+        ::shutdown(server->handle, SD_BOTH);
+        devdisc::close_socket(server->handle);
         if (server->worker.joinable()) {
             server->worker.join();
         }

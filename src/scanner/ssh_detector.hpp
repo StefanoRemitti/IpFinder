@@ -3,6 +3,8 @@
 #include <chrono>
 #include <string>
 
+#include "platform/windows_sockets.hpp"
+
 namespace devdisc {
 
 /// Outcome of probing one address for an SSH server.
@@ -35,7 +37,7 @@ std::string sanitize_banner(const std::string& raw);
 
 /// Reads the SSH identification string from an already connected socket.
 /// Never blocks longer than `timeout`.
-SshProbeResult read_ssh_banner(int fd, const std::string& ip,
+SshProbeResult read_ssh_banner(socket_t handle, const std::string& ip,
                                std::chrono::milliseconds timeout);
 
 /// Connects to `ip`:`port` and verifies that the peer identifies as SSH.

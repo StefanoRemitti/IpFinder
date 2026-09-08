@@ -1,6 +1,6 @@
 #include "parser/ifconfig_parser.hpp"
 
-#include <arpa/inet.h>
+#include "platform/windows_sockets.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -10,6 +10,7 @@ namespace devdisc {
 namespace {
 
 bool is_valid_ipv4(const std::string& text) {
+    ensure_winsock_initialised();
     in_addr addr{};
     return ::inet_pton(AF_INET, text.c_str(), &addr) == 1;
 }

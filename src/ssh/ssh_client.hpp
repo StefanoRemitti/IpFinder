@@ -9,7 +9,7 @@ namespace devdisc {
 /// Host-key verification policy.
 ///
 /// The default policy is Warn: the host key is recorded/compared against
-/// ~/.ssh/known_hosts and a mismatch or an unknown key is reported on stderr,
+/// %USERPROFILE%\.ssh\known_hosts and a mismatch or an unknown key is reported on stderr,
 /// but the connection continues. This is documented in the README: on a
 /// directly connected, physically isolated link there is no known key on the
 /// first run. Use Strict to abort on unknown or mismatching keys.
@@ -27,7 +27,7 @@ struct SshConfig {
     std::chrono::milliseconds connect_timeout{5000};
     std::chrono::milliseconds auth_timeout{5000};
     std::chrono::milliseconds command_timeout{5000};
-    std::string known_hosts_path;  ///< Empty: default ~/.ssh/known_hosts.
+    std::string known_hosts_path;  ///< Empty: %USERPROFILE%\.ssh\known_hosts.
     bool verbose = false;
 };
 
