@@ -25,6 +25,8 @@ struct Options {
     std::size_t threads = defaults::kThreadCount;
     std::string ssh_user = defaults::kSshUser;
     std::string password_env = defaults::kPasswordEnvVar;
+    std::string ssh_password;  ///< --ssh-password, takes precedence over the env var.
+    bool password_from_cli = false;
     bool json = false;
     bool verbose = false;
     bool strict_host_key = false;
@@ -49,8 +51,11 @@ void print_usage() {
            "Options:\n"
            "  --threads N              Worker threads for probing (default 32)\n"
            "  --ssh-user USER          SSH username (default root)\n"
+           "  --ssh-password PASS      SSH password (visible in the process list;\n"
+           "                           prefer --ssh-password-env)\n"
            "  --ssh-password-env VAR   Environment variable holding the password\n"
-           "                           (default DEVICE_SSH_PASSWORD)\n"
+           "                           (default DEVICE_SSH_PASSWORD, used when\n"
+           "                           --ssh-password is not given)\n"
            "  --json                   Machine readable output\n"
            "  --verbose                Diagnostic output on stderr\n"
            "  --timeout MS             TCP connect timeout (default 750)\n"
@@ -124,6 +129,9 @@ bool parse_options(int argc, char** argv, Options& options, int& exit_code) {
             options.threads = static_cast<std::size_t>(value);
         } else if (arg == "--ssh-user") {
             if (!next_value(options.ssh_user)) return false;
+        } else if (arg == "--ssh-password") {
+            if (!next_value(options.ssh_password)) return false;
+            options.password_from_cli = true;
         } else if (arg == "--ssh-password-env") {
             if (!next_value(options.password_env)) return false;
         } else if (arg == "--interface") {
@@ -291,12 +299,22 @@ int run(const Options& options) {
         return run_mock_mode(options);
     }
 
-    const char* password = std::getenv(options.password_env.c_str());
-    if (password == nullptr || *password == '\0') {
-        std::cerr << "Error: SSH password not configured.\n"
-                  << "       Set the environment variable " << options.password_env
-                  << " (see --ssh-password-env).\n";
-        return kUsageError;
+    std::string password;
+    if (options.password_from_cli) {
+        password = options.ssh_password;
+        if (password.empty()) {
+            std::cerr << "Error: --ssh-password requires a non-empty value.\n";
+            return kUsageError;
+        }
+    } else {
+        const char* password_env = std::getenv(options.password_env.c_str());
+        if (password_env == nullptr || *password_env == '\0') {
+            std::cerr << "Error: SSH password not configured.\n"
+                      << "       Pass --ssh-password, or set the environment variable "
+                      << options.password_env << " (see --ssh-password-env).\n";
+            return kUsageError;
+        }
+        password = password_env;
     }
 
     NetworkInterface iface;
