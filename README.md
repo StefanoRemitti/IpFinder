@@ -135,8 +135,9 @@ claiming that no device exists.
 ### 4. SSH authentication and remote command (`src/ssh/ssh_client.cpp`)
 
 libssh2 is used — the SSH protocol is never re-implemented. The client
-authenticates with username (default `root`) and the password taken from an
-environment variable, runs `ifconfig` first (part of the device contract) and
+authenticates with username (default `root`) and the password supplied either on
+the command line (`--ssh-password`) or taken from an environment variable, runs
+`ifconfig` first (part of the device contract) and
 falls back to `ip -4 addr` only if `ifconfig` is missing or fails. The session is
 always disconnected and freed, and every phase has a timeout.
 
@@ -163,11 +164,14 @@ device-discovery.exe
 rem or with a different variable
 set MY_SECRET=...
 device-discovery.exe --ssh-password-env MY_SECRET
+
+rem or directly on the command line
+device-discovery.exe --ssh-user root --ssh-password root
 ```
 
-Reading the password from the environment is preferred over a command line flag
-because command line arguments of a process are readable by other processes on
-the machine.
+`--ssh-password` takes precedence over the environment variable. Reading the
+password from the environment remains the preferred option because command line
+arguments of a process are readable by other processes on the machine.
 
 ### Host-key verification
 
@@ -193,8 +197,11 @@ device-discovery [options]
 
   --threads N              Worker threads for probing (default 32)
   --ssh-user USER          SSH username (default root)
+  --ssh-password PASS      SSH password (visible in the process list;
+                           prefer --ssh-password-env)
   --ssh-password-env VAR   Environment variable holding the password
-                           (default DEVICE_SSH_PASSWORD)
+                           (default DEVICE_SSH_PASSWORD, used when
+                           --ssh-password is not given)
   --json                   Machine readable output
   --verbose                Diagnostic output on stderr
   --timeout MS             TCP connect timeout (default 750)
@@ -323,7 +330,7 @@ device. Sample captures live in `samples/`.
 | Stage A finds nothing on a `/16` or larger  | Windows APIPA gives 169.254.0.0/16; subnets larger than `/22` are skipped by design, stage B takes over. |
 | Windows Firewall                            | Outbound TCP/22 must be allowed for `device-discovery.exe`.                               |
 | `port 22 is open but does not identify as SSH` | Something else listens on 22 on that host.                                              |
-| `SSH authentication failed`                 | Wrong password/user; check `DEVICE_SSH_PASSWORD` and `--ssh-user`.                        |
+| `SSH authentication failed`                 | Wrong password/user; check `--ssh-password`/`DEVICE_SSH_PASSWORD` and `--ssh-user`.                        |
 | Scan feels slow                             | Increase `--threads`, lower `--timeout`.                                                  |
 
 ---
